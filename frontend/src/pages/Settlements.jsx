@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettlements, getSuggestedSettlements, createSettlement } from '../lib/api';
+import { getSettlements, getSuggestedSettlements, createSettlement, deleteSettlement } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
@@ -23,6 +23,16 @@ export default function Settlements() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settlements'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteSettlement,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settlements'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
     }
   });
 
@@ -36,6 +46,12 @@ export default function Settlements() {
     });
   };
 
+  const handleUndo = (id) => {
+    if (window.confirm("Are you sure you want to undo this settlement?")) {
+      deleteMutation.mutate(id);
+    }
+  };
+
   if (loadingSuggested || loadingHistory) return <div>Loading...</div>;
 
   const suggested = suggestedData?.data || [];
@@ -43,13 +59,13 @@ export default function Settlements() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settlements</h1>
+      <h1 className="text-2xl font-bold text-primary">Settlements</h1>
 
       <div>
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Suggested Settlements</h2>
+        <h2 className="text-xl font-bold text-primary mb-4">Suggested Settlements</h2>
         {suggested.length === 0 ? (
           <Card>
-            <CardContent className="pt-6 text-center text-slate-500">
+            <CardContent className="pt-6 text-center text-muted">
               Everyone is settled up! 🎉
             </CardContent>
           </Card>
@@ -59,12 +75,12 @@ export default function Settlements() {
               return (
                 <Card key={idx} className="flex items-center justify-between p-6">
                   <div className="flex items-center gap-4">
-                    <div className="font-semibold text-rose-600">{s.from_name}</div>
-                    <ArrowRight className="w-4 h-4 text-slate-400" />
-                    <div className="font-semibold text-emerald-600">{s.to_name}</div>
+                    <div className="font-semibold text-red-500">{s.from_name}</div>
+                    <ArrowRight className="w-4 h-4 text-muted" />
+                    <div className="font-semibold text-emerald-500">{s.to_name}</div>
                   </div>
                   <div className="flex items-center gap-4">
-                    <div className="text-xl font-bold">₹{s.amount.toFixed(2)}</div>
+                    <div className="text-xl font-bold text-primary">₹{s.amount.toFixed(2)}</div>
                     <Button onClick={() => handleSettle(s)} disabled={mutation.isPending}>
                       Settle
                     </Button>
@@ -77,27 +93,38 @@ export default function Settlements() {
       </div>
 
       <div>
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Recent Settlements</h2>
+        <h2 className="text-xl font-bold text-primary mb-4">Recent Settlements</h2>
         <div className="space-y-4">
           {history.length === 0 ? (
-            <p className="text-slate-500">No past settlements.</p>
+            <p className="text-muted">No past settlements.</p>
           ) : (
             history.map(h => (
               <Card key={h.id} className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 text-primary">
                       <span className="font-medium">{h.from?.name}</span>
-                      <ArrowRight className="w-4 h-4 text-slate-400" />
+                      <ArrowRight className="w-4 h-4 text-muted" />
                       <span className="font-medium">{h.to?.name}</span>
                     </div>
-                    <div className="text-sm text-slate-500">
+                    <div className="text-sm text-muted">
                       {format(new Date(h.settled_date || h.created_at), 'MMM d, yyyy')}
                     </div>
                   </div>
                 </div>
-                <div className="font-bold">₹{parseFloat(h.amount).toFixed(2)}</div>
+                <div className="flex items-center gap-4">
+                  <div className="font-bold text-primary">₹{parseFloat(h.amount).toFixed(2)}</div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-red-500 hover:text-white hover:bg-red-500 border-red-500/50"
+                    onClick={() => handleUndo(h.id)} 
+                    disabled={deleteMutation.isPending}
+                  >
+                    Undo
+                  </Button>
+                </div>
               </Card>
             ))
           )}

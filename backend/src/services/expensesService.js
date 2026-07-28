@@ -51,23 +51,31 @@ function calculateEqualShares(amount, participants) {
 }
 
 export async function createExpense(data) {
-  let participantIds = data.participants || [];
+  let participantIds = [];
   
-  // Implicitly add paid_by to participants if not present
-  if (!participantIds.includes(data.paid_by)) {
-    participantIds.push(data.paid_by);
+  if (data.split_type === 'exact') {
+    participantIds = data.participants.map(p => p.member_id);
+  } else {
+    participantIds = data.participants || [];
   }
 
   // Ensure all referenced members (participants + paid_by) exist and are active
-  await assertMembersActive(participantIds);
+  const membersToCheck = [...new Set([...participantIds, data.paid_by])];
+  await assertMembersActive(membersToCheck);
 
-  // For MVP, split_type is only 'equal'
-  if (data.split_type !== 'equal') {
-    throw new AppError('NOT_IMPLEMENTED', 501, 'Only equal split is supported in MVP');
+  let calculatedShares = [];
+  
+  if (data.split_type === 'equal') {
+    const enrichedParticipants = await getEnrichedParticipants(participantIds);
+    calculatedShares = calculateEqualShares(data.amount, enrichedParticipants);
+  } else if (data.split_type === 'exact') {
+    calculatedShares = data.participants.map(p => ({
+      member_id: p.member_id,
+      share_amount: (p.amount || 0).toFixed(2)
+    }));
+  } else {
+    throw new AppError('NOT_IMPLEMENTED', 501, 'Only equal and exact splits are supported in MVP');
   }
-
-  const enrichedParticipants = await getEnrichedParticipants(participantIds);
-  const calculatedShares = calculateEqualShares(data.amount, enrichedParticipants);
 
   // Prepare expense payload
   const expenseData = {
@@ -179,18 +187,25 @@ export async function updateExpense(id, data) {
   // Validate expense exists
   const existing = await getExpenseById(id);
 
-  // If participants are being updated, handle atomic deletion/re-insertion
-  let participantIds = data.participants || existing.expense_participants.map(p => p.member_id);
-  const paid_by = data.paid_by || existing.paid_by;
-  const amount = data.amount || existing.amount;
-  
-  if (data.participants || data.paid_by) {
-    if (!participantIds.includes(paid_by)) {
-      participantIds.push(paid_by);
+  // Determine the new or existing split_type
+  const splitType = data.split_type || existing.split_type;
+
+  // Determine participantIds for validation
+  let participantIds = [];
+  if (data.participants) {
+    if (splitType === 'exact') {
+      participantIds = data.participants.map(p => p.member_id);
+    } else {
+      participantIds = data.participants;
     }
+  } else {
+    // If participants not updated, extract from existing
+    participantIds = existing.expense_participants.map(p => p.member_id);
   }
 
-  await assertMembersActive(participantIds);
+  const paid_by_to_check = data.paid_by || existing.paid_by;
+  const membersToCheck = [...new Set([...participantIds, paid_by_to_check])];
+  await assertMembersActive(membersToCheck);
 
   const expenseData = { ...data };
   delete expenseData.participants;
@@ -203,10 +218,25 @@ export async function updateExpense(id, data) {
     if (expErr) mapSupabaseError(expErr);
   }
 
-  if (data.participants || data.amount) {
-    // Recalculate and re-insert
-    const enrichedParticipants = await getEnrichedParticipants(participantIds);
-    const calculatedShares = calculateEqualShares(amount, enrichedParticipants);
+  if (data.participants || data.amount || data.split_type) {
+    const amount = data.amount || existing.amount;
+    let calculatedShares = [];
+
+    if (splitType === 'equal') {
+      const enrichedParticipants = await getEnrichedParticipants(participantIds);
+      calculatedShares = calculateEqualShares(amount, enrichedParticipants);
+    } else if (splitType === 'exact') {
+      // Use the explicitly provided participants if updating them, else reuse existing with validation
+      const participantsToUse = data.participants || existing.expense_participants.map(p => ({
+        member_id: p.member_id,
+        amount: parseFloat(p.share_amount)
+      }));
+      
+      calculatedShares = participantsToUse.map(p => ({
+        member_id: p.member_id,
+        share_amount: (p.amount || 0).toFixed(2)
+      }));
+    }
 
     // Delete existing
     const { error: delErr } = await supabase

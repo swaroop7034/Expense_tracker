@@ -1,7 +1,33 @@
 @import "tailwindcss";
 
+@theme {
+  --color-background: #FBF9F4;
+  --color-surface: #FFFFFF;
+  --color-surface-hover: #F2EFE9;
+  --color-primary: #292524;
+  --color-muted: #78716C;
+  --color-divider: #E7E5E4;
+  --color-emerald: #10B981;
+  --color-crimson: #EF4444;
+  
+  --font-sans: "Geist Sans", sans-serif;
+  --font-heading: "Plus Jakarta Sans", sans-serif;
+
+  --shadow-swiss: 0 2px 8px rgba(0,0,0,0.05);
+  --radius-swiss: 8px;
+}
+
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50;
+    @apply bg-background text-primary;
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    line-height: 1.2;
+    color: var(--color-primary);
   }
 }

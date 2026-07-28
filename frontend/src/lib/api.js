@@ -9,9 +9,11 @@ export const getExpenses = (params) => api.get('/expenses', { params }).then(res
 export const getExpenseById = (id) => api.get(`/expenses/${id}`).then(res => res.data);
 export const createExpense = (data) => api.post('/expenses', data).then(res => res.data);
 export const updateExpense = ({ id, data }) => api.put(`/expenses/${id}`, data).then(res => res.data);
+export const deleteExpense = (id) => api.delete(`/expenses/${id}`).then(res => res.data);
 
 // Members
 export const getMembers = () => api.get('/members').then(res => res.data);
+export const getMemberDetails = (id) => api.get(`/members/${id}/details`).then(res => res.data);
 export const createMember = (data) => api.post('/members', data).then(res => res.data);
 
 // Categories
@@ -24,8 +26,12 @@ export const getDashboard = () => api.get('/dashboard').then(res => res.data);
 export const getSettlements = () => api.get('/settlements').then(res => res.data);
 export const getSuggestedSettlements = () => api.get('/settlements/suggested').then(res => res.data);
 export const createSettlement = (data) => api.post('/settlements', data).then(res => res.data);
+export const deleteSettlement = (id) => api.delete(`/settlements/${id}`).then(res => res.data);
 
 // Activity
 export const getActivity = () => api.get('/activity').then(res => res.data);
+
+// Breakdown
+export const getBreakdown = () => api.get('/breakdown').then(res => res.data);
 
 export default api;

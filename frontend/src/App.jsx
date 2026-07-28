@@ -6,6 +6,7 @@ import ExpenseForm from './pages/ExpenseForm';
 import Members from './pages/Members';
 import Settlements from './pages/Settlements';
 import Activity from './pages/Activity';
+import SimplificationBreakdown from './pages/SimplificationBreakdown';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
           <Route path="members" element={<Members />} />
           <Route path="settlements" element={<Settlements />} />
           <Route path="activity" element={<Activity />} />
+          <Route path="breakdown" element={<SimplificationBreakdown />} />
         </Route>
       </Routes>
     </BrowserRouter>

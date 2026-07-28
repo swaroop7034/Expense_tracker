@@ -32,11 +32,11 @@ export default function Expenses() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Expenses</h1>
+        <h1 className="text-2xl font-bold text-primary">Expenses</h1>
         <Button onClick={() => navigate('/expenses/new')}>Add Expense</Button>
       </div>
 
-      <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+      <div className="rounded-[8px] border border-divider bg-surface shadow-swiss">
         <Table>
           <TableHeader>
             <TableRow>
@@ -63,7 +63,7 @@ export default function Expenses() {
                 return (
                   <TableRow 
                     key={expense.id} 
-                    className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    className="cursor-pointer hover:bg-surface-hover"
                     onClick={() => setSelectedExpense(expense)}
                   >
                     <TableCell className="whitespace-nowrap">
@@ -73,7 +73,7 @@ export default function Expenses() {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <div 
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-white" 
+                          className="w-6 h-6 rounded-[4px] flex items-center justify-center text-white" 
                           style={{ backgroundColor: expense.category?.color || '#ccc' }}
                         >
                           <Icon className="w-3 h-3" />
@@ -82,7 +82,7 @@ export default function Expenses() {
                       </div>
                     </TableCell>
                     <TableCell>{expense.payer?.name}</TableCell>
-                    <TableCell className="text-right font-bold text-slate-900 dark:text-white">
+                    <TableCell className="text-right font-bold text-primary">
                       ₹{parseFloat(expense.amount).toFixed(2)}
                     </TableCell>
                   </TableRow>
@@ -100,33 +100,33 @@ export default function Expenses() {
       >
         {selectedExpense && (
           <div className="space-y-6">
-            <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-md space-y-3">
+            <div className="bg-background/50 border border-divider p-4 rounded-[8px] space-y-3">
               <div>
-                <h3 className="font-bold text-lg text-slate-900 dark:text-white">{selectedExpense.title}</h3>
-                <div className="text-sm text-slate-500">{format(new Date(selectedExpense.expense_date), 'MMMM d, yyyy')}</div>
+                <h3 className="font-bold text-lg text-primary">{selectedExpense.title}</h3>
+                <div className="text-sm text-muted">{format(new Date(selectedExpense.expense_date), 'MMMM d, yyyy')}</div>
               </div>
               <div className="flex justify-between items-center text-sm">
-                <span className="text-slate-500">Total Amount:</span>
-                <span className="font-bold text-lg text-slate-900 dark:text-white">₹{parseFloat(selectedExpense.amount).toFixed(2)}</span>
+                <span className="text-muted">Total Amount:</span>
+                <span className="font-bold text-lg text-primary">₹{parseFloat(selectedExpense.amount).toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center text-sm">
-                <span className="text-slate-500">Paid By:</span>
-                <span className="font-medium">{selectedExpense.payer?.name}</span>
+                <span className="text-muted">Paid By:</span>
+                <span className="font-medium text-primary">{selectedExpense.payer?.name}</span>
               </div>
             </div>
 
             <div>
-              <h3 className="font-semibold text-slate-900 dark:text-white mb-3 text-sm uppercase tracking-wider">Split Details</h3>
+              <h3 className="font-semibold text-primary mb-3 text-sm uppercase tracking-wider">Split Details</h3>
               <div className="space-y-3">
                 {selectedExpense.expense_participants?.map((p, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-sm border-b border-slate-100 dark:border-slate-800 pb-2 last:border-0">
+                  <div key={idx} className="flex justify-between items-center text-sm border-b border-divider pb-2 last:border-0">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: p.member?.color || '#3b82f6' }}>
+                      <div className="w-6 h-6 rounded-[4px] flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: p.member?.color || '#3b82f6' }}>
                         {p.member?.name?.charAt(0).toUpperCase()}
                       </div>
-                      <span className="text-slate-700 dark:text-slate-300 font-medium">{p.member?.name}</span>
+                      <span className="text-primary font-medium">{p.member?.name}</span>
                     </div>
-                    <span className="font-bold text-slate-900 dark:text-white">₹{parseFloat(p.share_amount).toFixed(2)}</span>
+                    <span className="font-bold text-primary">₹{parseFloat(p.share_amount).toFixed(2)}</span>
                   </div>
                 ))}
               </div>

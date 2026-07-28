@@ -25,9 +25,9 @@ export default function Activity() {
   if (activities.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Activity</h1>
+        <h1 className="text-2xl font-bold text-primary">Activity</h1>
         <Card>
-          <CardContent className="pt-6 text-center text-slate-500">
+          <CardContent className="pt-6 text-center text-muted">
             No activity yet. Add an expense to get started!
           </CardContent>
         </Card>
@@ -43,18 +43,22 @@ export default function Activity() {
     return acc;
   }, {});
 
+  const sortedDates = Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a));
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Activity</h1>
+      <h1 className="text-2xl font-bold text-primary">Activity</h1>
 
       <div className="space-y-8">
-        {Object.entries(grouped).map(([dateStr, items]) => (
+        {sortedDates.map((dateStr) => {
+          const items = grouped[dateStr];
+          return (
           <div key={dateStr} className="space-y-4">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-50 dark:bg-slate-950 py-2">
+            <h3 className="text-sm font-semibold text-muted uppercase tracking-wider sticky top-0 bg-background py-2">
               {formatDisplayDate(dateStr)}
             </h3>
             
-            <div className="space-y-3 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 dark:before:via-slate-800 before:to-transparent">
+            <div className="space-y-3 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-divider">
               {items.map((item, idx) => {
                 const isExpense = item.type === 'expense';
                 
@@ -69,13 +73,13 @@ export default function Activity() {
 
                 return (
                   <div key={item.id + idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-slate-50 dark:border-slate-950 shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" style={{ backgroundColor: iconColor }}>
+                    <div className="flex items-center justify-center w-10 h-10 rounded-[8px] border-4 border-background shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" style={{ backgroundColor: iconColor }}>
                       <Icon className="w-4 h-4 text-white" />
                     </div>
                     
-                    <Card className="w-[calc(100%-3rem)] md:w-[calc(50%-2.5rem)] p-4 hover:ring-2 hover:ring-slate-200 dark:hover:ring-slate-700 transition-all">
+                    <Card className="w-[calc(100%-3rem)] md:w-[calc(50%-2.5rem)] p-4 hover:ring-2 hover:ring-divider transition-all shadow-none">
                       <div className="flex justify-between items-start mb-1">
-                        <div className="font-semibold text-slate-900 dark:text-white truncate pr-2">
+                        <div className="font-semibold text-primary truncate pr-2">
                           {isExpense ? item.title : 'Settlement'}
                         </div>
                         <div className="font-bold shrink-0 whitespace-nowrap" style={{ color: isExpense ? item.actor.color : '#10b981' }}>
@@ -83,7 +87,7 @@ export default function Activity() {
                         </div>
                       </div>
                       
-                      <div className="text-sm text-slate-500 dark:text-slate-400">
+                      <div className="text-sm text-muted">
                         {isExpense ? (
                           <span>
                             <strong style={{ color: item.actor.color }}>{item.actor.name}</strong> paid
@@ -100,7 +104,7 @@ export default function Activity() {
               })}
             </div>
           </div>
-        ))}
+        )})}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { createMemberSchema, updateMemberSchema } from '../../../validators/memb
 const router = Router();
 
 router.get('/', membersController.getAllMembers);
+router.get('/:id/details', membersController.getMemberDetails);
 router.get('/:id', membersController.getMemberById);
 router.post('/', validate(createMemberSchema), membersController.createMember);
 router.put('/:id', validate(updateMemberSchema), membersController.updateMember);

@@ -19,6 +19,15 @@ export async function getMemberById(req, res, next) {
   }
 }
 
+export async function getMemberDetails(req, res, next) {
+  try {
+    const data = await membersService.getMemberDetails(req.params.id);
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function createMember(req, res, next) {
   try {
     const data = await membersService.createMember(req.body);

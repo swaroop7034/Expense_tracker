@@ -2,6 +2,7 @@ services:
   - type: web
     name: pg-expense-backend
     env: node
+    plan: free
     rootDir: backend
     buildCommand: npm install
     startCommand: npm start

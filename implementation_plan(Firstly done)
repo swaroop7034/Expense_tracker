@@ -1,0 +1,1005 @@
+# PG Expense Tracker — Final Implementation Plan (v4)
+
+## Overview
+
+A full-stack, production-ready PG expense management web application. Built with **React 18** + Vite + Tailwind CSS on the frontend and Express.js + Supabase PostgreSQL on the backend.
+
+**Build philosophy**: Ship a working product first. Features like real-time, export, and analytics come after core CRUD is solid.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Supabase Credentials Required**: You will need `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from your Supabase project settings. These go **only** in `backend/.env` — never in the frontend. The frontend talks exclusively to your Express backend, not to Supabase directly. See Section 8 (Environment Variables) for the full security model.
+
+> [!IMPORTANT]
+> **Balances are NOT stored** — computed on-the-fly from `expenses` + `expense_participants` + `settlements`. Always accurate, no sync needed.
+
+> [!NOTE]
+> **No Auth in Phase 1** — `created_by` / `updated_by` audit fields will be nullable UUIDs, usable once auth is added later.
+
+---
+
+## 1. Database Schema (Clean & Final)
+
+### `members`
+
+```sql
+CREATE TABLE members (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  email       TEXT UNIQUE,
+  avatar_url  TEXT,
+  color       TEXT NOT NULL,   -- predefined per member, see seed data
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  deleted_at  TIMESTAMPTZ,     -- soft delete ✅
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### `categories`
+
+```sql
+CREATE TABLE categories (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  icon_name   TEXT NOT NULL,   -- lucide icon slug: 'shopping-cart', 'wifi', 'home'
+  color       TEXT NOT NULL,   -- distinct hex per category
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**No soft delete. No `is_default` flag.** Categories are **read-only seed data** — the app does not expose a `POST /categories` endpoint. Users pick from the fixed list; admins add new ones directly in Supabase if needed.
+
+Seed data (`icon_name` → Lucide component, `color` → distinct hex):
+
+| Category | icon_name | color |
+|---|---|---|
+| Groceries | `shopping-cart` | `#10b981` |
+| Vegetables | `leaf` | `#22c55e` |
+| Gas | `fuel` | `#f59e0b` |
+| Internet | `wifi` | `#3b82f6` |
+| Cleaning | `sparkles` | `#8b5cf6` |
+| Utilities | `zap` | `#f97316` |
+| Snacks | `cookie` | `#ec4899` |
+| Rent | `home` | `#06b6d4` |
+| Miscellaneous | `package` | `#6b7280` |
+
+### `expenses`
+
+```sql
+CREATE TABLE expenses (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title               TEXT NOT NULL,
+  amount              NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  category_id         UUID NOT NULL REFERENCES categories(id),
+  split_type          TEXT NOT NULL DEFAULT 'equal'
+                        CHECK (split_type IN ('equal', 'exact', 'percentage')),
+  expense_type        TEXT NOT NULL DEFAULT 'regular'
+                        CHECK (expense_type IN ('regular', 'recurring')),
+  paid_by             UUID NOT NULL REFERENCES members(id),
+  expense_date        DATE NOT NULL DEFAULT CURRENT_DATE,
+  notes               TEXT,
+  is_favourite        BOOLEAN NOT NULL DEFAULT false,
+  recurrence_rule     JSONB,         -- { freq: 'monthly', day: 1, end_date: '2025-12-31' }
+  parent_expense_id   UUID REFERENCES expenses(id),  -- recurring children
+  deleted_at          TIMESTAMPTZ,   -- soft delete ✅
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by          UUID REFERENCES members(id),   -- audit ✅
+  updated_by          UUID REFERENCES members(id)    -- audit ✅
+);
+```
+
+### `expense_participants`
+
+```sql
+CREATE TABLE expense_participants (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  expense_id    UUID NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  member_id     UUID NOT NULL REFERENCES members(id),
+  share_amount  NUMERIC(12,2) NOT NULL CHECK (share_amount >= 0),
+  share_percent NUMERIC(5,2),       -- populated when split_type = 'percentage'
+  UNIQUE(expense_id, member_id)
+);
+```
+
+**No soft delete** — junction table. Cascade delete when expense is hard-deleted. When an expense is soft-deleted, participants stay but are ignored in queries (filter by `expenses.deleted_at IS NULL`). ✅
+
+### `settlements`
+
+```sql
+CREATE TABLE settlements (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_member   UUID NOT NULL REFERENCES members(id),
+  to_member     UUID NOT NULL REFERENCES members(id),
+  amount        NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'completed', 'cancelled')),
+  notes         TEXT,
+  settled_date  DATE,
+  deleted_at    TIMESTAMPTZ,        -- soft delete ✅ (recovery matters)
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by    UUID REFERENCES members(id),
+  updated_by    UUID REFERENCES members(id),
+  CONSTRAINT no_self_settlement CHECK (from_member != to_member)
+);
+```
+
+> [!NOTE]
+> **No separate `payments` table in Phase 1.** A settlement record with `status = 'completed'` represents a completed payment. The `payments` table can be added in Phase 2 if finer-grained payment tracking (UPI ref, method) is needed.
+
+### Indexes
+
+```sql
+-- Expenses
+CREATE INDEX idx_expenses_paid_by    ON expenses(paid_by)      WHERE deleted_at IS NULL;
+CREATE INDEX idx_expenses_date       ON expenses(expense_date DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_expenses_category   ON expenses(category_id)  WHERE deleted_at IS NULL;
+CREATE INDEX idx_expenses_favourite  ON expenses(is_favourite)  WHERE deleted_at IS NULL AND is_favourite = true;
+
+-- Participants
+CREATE INDEX idx_participants_expense ON expense_participants(expense_id);
+CREATE INDEX idx_participants_member  ON expense_participants(member_id);
+
+-- Settlements
+CREATE INDEX idx_settlements_from ON settlements(from_member) WHERE deleted_at IS NULL;
+CREATE INDEX idx_settlements_to   ON settlements(to_member)   WHERE deleted_at IS NULL;
+CREATE INDEX idx_settlements_status ON settlements(status)    WHERE deleted_at IS NULL;
+```
+
+### Trigger: auto-update `updated_at`
+
+```sql
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_expenses_updated_at
+  BEFORE UPDATE ON expenses
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_members_updated_at
+  BEFORE UPDATE ON members
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_settlements_updated_at
+  BEFORE UPDATE ON settlements
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+### RLS Policies
+
+- All tables: public `SELECT` (no auth in Phase 1)
+- `INSERT` / `UPDATE` / `DELETE`: backend uses `service_role` key → bypasses RLS
+- RLS enabled but permissive for now; tighten when auth is added
+
+---
+
+## 2. Expense Split Types
+
+The DB schema supports all three split types from day one via the `split_type` column — **no migration needed when new split types ship**. Implementation is phased so the MVP ships sooner.
+
+| `split_type` | Version | Behaviour | UI |
+|---|---|---|---|
+| `equal` | ✅ **MVP** | Amount ÷ N participants | Checkboxes — everyone selected gets an equal share |
+| `exact` | 🔜 **v1.1** | Each participant gets a manually entered amount | Number input per person — must sum to total |
+| `percentage` | 🔜 **v1.2** | Each participant gets a % of total | % input per person — must sum to 100% |
+
+### MVP (equal split only)
+
+> [!IMPORTANT]
+> **paid_by is always a participant.** Explicit design decision: the person who paid is always included in the split. If Swaroop pays ₹600 for groceries and selects 3 others, there are 4 participants total (₹150 each). Net balance: Swaroop paid ₹600, owes ₹150 → up ₹450. This is the Splitwise model. The UI must pre-check the payer's checkbox and disable it (non-removable).
+
+- Backend: use **floor + remainder distribution** (not naive `round(amount/n, 2)` which silently drops paise)
+- Frontend: checkboxes only — payer's checkbox is pre-checked and disabled
+- Validation: must have ≥ 1 participant
+
+**calculateShares algorithm (equal split):**
+```js
+function calculateEqualShares(amount, participantIds) {
+  // Work in paise (integer) to avoid floating-point drift
+  const totalPaise   = Math.round(amount * 100);
+  const n            = participantIds.length;
+  const floorPaise   = Math.floor(totalPaise / n);   // base share
+  const remainder    = totalPaise % n;                // leftover paise to distribute
+
+  // Sort by member created_at (oldest member first) so the extra paisa
+  // lands predictably on whoever joined the group first — not a random UUID
+  // NOTE: participantIds must be enriched with created_at before calling this
+  const sorted = [...participants].sort(
+    (a, b) => new Date(a.created_at) - new Date(b.created_at)
+  );
+  const sortedIds = sorted.map(p => p.member_id);
+
+  return sortedIds.map((memberId, i) => ({
+    member_id:    memberId,
+    share_amount: ((floorPaise + (i < remainder ? 1 : 0)) / 100).toFixed(2),
+  }));
+  // Invariant: SUM(share_amount) === amount  ✅
+}
+```
+> [!NOTE]
+> This guarantees `SUM(shares) === amount` regardless of number of participants. Example: ₹100 ÷ 3 → [33.34, 33.33, 33.33] not [33.33, 33.33, 33.33].
+> Sort order: oldest member (`created_at ASC`) gets the extra paisa first — deterministic and intentional rather than UUID-alphabetical.
+
+### v1.1 (exact split)
+- Backend: validate `SUM(share_amount) == expense.amount` (with float tolerance ±0.01)
+- Frontend: number input appears per selected member
+- Error code: `INVALID_SPLIT_AMOUNTS`
+
+### v1.2 (percentage split)
+- Backend: validate `SUM(share_percent) == 100`, then compute `share_amount = (percent / 100) * amount`
+- Frontend: % input per member with live running total indicator
+- Error code: `INVALID_SPLIT_PERCENTAGES`
+
+---
+
+## 3. Balance Calculation (Computed, Never Stored)
+
+```
+For each member:
+  paid     = SUM(e.amount) WHERE e.paid_by = member AND e.deleted_at IS NULL
+  owes     = SUM(ep.share_amount) WHERE ep.member_id = member
+               JOIN expenses e WHERE e.deleted_at IS NULL
+  settled_paid     = SUM(s.amount) WHERE s.from_member = member AND s.status = 'completed'
+  settled_received = SUM(s.amount) WHERE s.to_member   = member AND s.status = 'completed'
+
+  net_balance = (paid - owes) + (settled_received - settled_paid)
+
+  net_balance > 0 → member is owed money (green)
+  net_balance < 0 → member owes money (red)
+  net_balance = 0 → settled (grey)
+```
+
+---
+
+## 4. Settlement Algorithm
+
+Greedy min-transaction algorithm. **Re-sorts every iteration** to always pick the true largest debtor/creditor after each partial settlement.
+
+> [!WARNING]
+> **Bug fixed**: Sorting once at the start and walking the list produces the correct *total* but not the *minimum* number of transactions. After a partial settlement, balances change — the next "largest" may be a different member. The fix is to re-sort (or use a max-heap) at the start of every loop iteration.
+
+```js
+function calculateSettlements(balances) {
+  // balances: [{ memberId, name, net }]  where net = paid - owes (in paise)
+  const transactions = [];
+
+  // Work with mutable copies
+  let creditors = balances.filter(b => b.net > 0).map(b => ({ ...b }));
+  let debtors   = balances.filter(b => b.net < 0).map(b => ({ ...b }));
+
+  while (creditors.length > 0 && debtors.length > 0) {
+    // ✅ Re-sort every iteration — critical for true minimum transactions
+    creditors.sort((a, b) => b.net - a.net);          // largest first
+    debtors.sort((a, b) => a.net - b.net);            // most negative first
+
+    const creditor = creditors[0];
+    const debtor   = debtors[0];
+
+    const transfer = Math.min(creditor.net, Math.abs(debtor.net));
+
+    transactions.push({
+      from:   debtor.memberId,
+      to:     creditor.memberId,
+      amount: (transfer / 100).toFixed(2),            // back to rupees
+    });
+
+    creditor.net -= transfer;
+    debtor.net   += transfer;
+
+    if (Math.abs(creditor.net) < 1) creditors.shift(); // settled (< 1 paise)
+    if (Math.abs(debtor.net)   < 1) debtors.shift();
+  }
+
+  return transactions;
+}
+```
+
+**Required test cases (must all pass before shipping):**
+```js
+// Must cover the re-sort correctness, not just 2-person happy path
+it('4-member case that exposes the static-sort bug')
+// Example: A=+300, B=+100, C=-250, D=-150
+// Correct:  C→A ₹250, D→A ₹50, D→B ₹100  (3 transactions)
+// Wrong static-sort: may produce 4 transactions
+it('returns empty array when all balances are zero')
+it('resolves two-person debt in one transaction')
+it('never produces self-payment transfers')
+it('SUM of all transfer amounts equals SUM of all positive balances')
+it('handles single-paisa remainder correctly')
+```
+
+---
+
+## 5. Backend Structure
+
+```
+backend/
+├── src/
+│   ├── config/
+│   │   ├── supabase.js        # Supabase client — service_role key, NEVER sent to frontend
+│   │   └── env.js             # Zod env validation — process exits on missing vars
+│   ├── api/
+│   │   └── v1/
+│   │       ├── routes/
+│   │       │   ├── members.js
+│   │       │   ├── expenses.js
+│   │       │   ├── settlements.js
+│   │       │   ├── categories.js  # GET only — no POST/PUT/DELETE
+│   │       │   ├── dashboard.js
+│   │       │   └── analytics.js
+│   │       └── index.js
+│   ├── controllers/
+│   │   ├── membersController.js
+│   │   ├── expensesController.js
+│   │   ├── settlementsController.js
+│   │   ├── categoriesController.js
+│   │   ├── dashboardController.js
+│   │   └── analyticsController.js
+│   ├── services/
+│   │   ├── membersService.js
+│   │   ├── expensesService.js     # owns split logic + sequential atomic writes
+│   │   ├── settlementsService.js
+│   │   ├── balanceService.js      # pure computation, no DB writes
+│   │   ├── settlementAlgorithm.js # greedy min-transaction (pure function, no I/O)
+│   │   ├── analyticsService.js
+│   │   └── exportService.js       # CSV generation
+│   ├── validators/                # Zod schemas — one file per resource
+│   │   ├── expense.validator.js   # createExpenseSchema, updateExpenseSchema
+│   │   ├── member.validator.js    # createMemberSchema, updateMemberSchema
+│   │   └── settlement.validator.js # createSettlementSchema, updateSettlementSchema
+│   ├── middleware/
+│   │   ├── errorHandler.js        # maps AppError → HTTP response with error code
+│   │   ├── validate.js            # thin factory: validate(schema) → middleware fn
+│   │   ├── rateLimiter.js         # express-rate-limit
+│   │   └── requestLogger.js       # morgan
+│   └── utils/
+│       ├── apiResponse.js         # success() / error() response builders
+│       ├── AppError.js            # custom error class with code + status
+│       └── helpers.js
+├── server.js
+├── .env.example
+└── package.json
+```
+
+
+> [!IMPORTANT]
+> **Recurring expenses — deferred to post-MVP.** The `recurrence_rule` and `parent_expense_id` columns exist in the schema but are unused in Phases 1–9. **Explicit design decision for v1.1:** The parent recurring expense is a **template only** — it does NOT affect balances or appear in expense history. Only auto-generated child instances are real expenses. This prevents double-counting in analytics. Execution mechanism: `node-cron` inside Express (acceptable for single-instance PG; upgrade to `pg_cron` extension if multi-instance deployment is needed).
+
+### Service Layer Contract
+
+
+Controllers **only** call services. Services own:
+- All Supabase queries (via `supabase.js` — service_role client, server-side only)
+- Business logic (split calculation, balance computation)
+- Sequential write coordination (no Supabase RPC)
+- **Postgres error mapping** — catch raw DB errors and convert to typed `AppError`
+- **Active member guard** — verify all referenced member IDs are alive before any DB write
+
+**Active member guard (called at top of createExpense and createSettlement):**
+```js
+async function assertMembersActive(memberIds) {
+  const { data, error } = await supabase
+    .from('members')
+    .select('id, deleted_at, is_active')
+    .in('id', memberIds);
+
+  if (error) throw new AppError('DB_QUERY_FAILED', 500, error.message);
+
+  for (const m of data) {
+    if (m.deleted_at || !m.is_active)
+      throw new AppError('MEMBER_DELETED', 409,
+        `Member ${m.id} has been removed from the group.`);
+  }
+  // Also catches ghost UUIDs: if data.length !== memberIds.length, a UUID didn't exist at all
+  if (data.length !== memberIds.length)
+    throw new AppError('MEMBER_NOT_FOUND', 404, 'One or more member IDs do not exist.');
+}
+
+**Postgres error code mapping (in every service write):**
+```js
+function mapSupabaseError(err, context = {}) {
+  if (err.code === '23505') {                          // unique_violation
+    if (err.message.includes('expense_participants'))
+      throw new AppError('DUPLICATE_PARTICIPANT', 409, 'A member cannot be added twice to the same expense.');
+    throw new AppError('DUPLICATE_ENTRY', 409, err.message);
+  }
+  if (err.code === '23503')                            // foreign_key_violation
+    throw new AppError('REFERENCE_NOT_FOUND', 404, err.message);
+  throw new AppError('DB_INSERT_FAILED', 500, err.message);
+}
+// Usage: if (error) mapSupabaseError(error);
+```
+> [!NOTE]
+> This is what makes the `DUPLICATE_PARTICIPANT` error code in the registry actually reachable. Without this, Postgres `23505` surfaces as generic `DB_INSERT_FAILED`.
+
+**Expense creation — service-level sequencing (no RPC):**
+
+```js
+// services/expensesService.js
+async function createExpense(data) {
+  // 1. Calculate shares based on split_type
+  const participants = calculateShares(data);
+
+  // 2. Insert expense row
+  const { data: expense, error: expErr } = await supabase
+    .from('expenses')
+    .insert({ ...expenseFields })
+    .select()
+    .single();
+  if (expErr) throw new AppError('DB_INSERT_FAILED', 500, expErr.message);
+
+  // 3. Insert participant rows (bulk)
+  const rows = participants.map(p => ({ expense_id: expense.id, ...p }));
+  const { error: partErr } = await supabase
+    .from('expense_participants')
+    .insert(rows);
+
+  // 4. Compensating rollback if participants insert fails
+  if (partErr) {
+    await supabase.from('expenses').delete().eq('id', expense.id);
+    throw new AppError('DB_INSERT_FAILED', 500, partErr.message);
+  }
+
+  return expense;
+}
+```
+
+> [!WARNING]
+> **Transaction Limitation — Known Trade-off**: This approach is **not truly atomic**. In the rare scenario where the expense row is inserted successfully but the participants insert fails *and* the compensating rollback `DELETE` also fails (e.g. due to a network interruption between the two calls), you could end up with an orphaned expense row containing no participants.
+>
+> This is an acceptable trade-off for this project because:
+> - It's easy to understand and debug
+> - All business logic stays in one language (JavaScript)
+> - The failure window is extremely small in practice
+>
+> **Future upgrade path**: Wrap both inserts in a Supabase PostgreSQL stored procedure (RPC) called via `supabase.rpc('create_expense_with_participants', {...})`. This executes inside a real `BEGIN / COMMIT / ROLLBACK` transaction, making it truly atomic. This can be dropped in as a single service-layer change without touching controllers or routes.
+
+Same pattern for expense updates: delete existing participants → insert new ones.
+
+---
+
+## 6. Backend Validation (Zod)
+
+```js
+// validators/expense.validator.js
+
+// POST /api/v1/expenses
+export const createExpenseSchema = z.object({
+  title:        z.string().min(1).max(200),
+  amount:       z.number().positive(),
+  category_id:  z.string().uuid(),
+  split_type:   z.enum(['equal', 'exact', 'percentage']).default('equal'),
+  paid_by:      z.string().uuid(),
+  expense_date: z.string().date(),
+  notes:        z.string().max(500).optional(),
+  is_favourite: z.boolean().optional().default(false),
+  // MVP: participants is an array of member UUIDs (equal split only)
+  // paid_by is always injected into this array by the service if not present
+  participants: z.array(z.string().uuid())
+    .min(1)
+    .refine(
+      arr => new Set(arr).size === arr.length,
+      { message: 'Duplicate member in participants list' }
+    ),
+  // Result: duplicate UUIDs fail with VALIDATION_ERROR before touching Postgres
+  // (faster + cleaner than catching Postgres 23505 unique violation downstream)
+});
+
+// GET /api/v1/expenses  — query param validation
+export const listExpensesQuerySchema = z.object({
+  page:        z.coerce.number().int().positive().default(1),
+  per_page:    z.coerce.number().int().min(1).max(100).default(20),
+  search:      z.string().max(200).optional(),
+  category_id: z.string().uuid().optional(),
+  paid_by:     z.string().uuid().optional(),
+  member_id:   z.string().uuid().optional(),   // participant filter
+  date_from:   z.string().date().optional(),
+  date_to:     z.string().date().optional(),
+  is_favourite:z.coerce.boolean().optional(),
+  sort_by:     z.enum(['expense_date', 'amount', 'created_at']).default('expense_date'),
+  sort_order:  z.enum(['asc', 'desc']).default('desc'),
+}).refine(
+  d => !d.date_from || !d.date_to || d.date_from <= d.date_to,
+  { message: 'date_from must be before date_to', path: ['date_from'] }
+);
+```
+
+> [!NOTE]
+> `listExpensesQuerySchema` is applied via `validate(listExpensesQuerySchema, 'query')` on the GET route. Without this, invalid query params (e.g. `page=-1`, `category_id=not-a-uuid`) hit Supabase directly and produce confusing errors.
+
+---
+
+## 7. Frontend Structure
+
+```
+frontend/
+├── public/
+│   ├── manifest.json      # PWA
+│   └── icons/             # app icons
+├── src/
+│   ├── api/
+│   │   └── client.js      # Axios base instance + interceptors + error normalisation
+│   ├── services/          # one file per resource, calls client.js
+│   ├── hooks/             # TanStack Query hooks (useMembers, useExpenses, etc.)
+│   ├── context/
+│   │   ├── ThemeContext.jsx
+│   │   └── CurrencyContext.jsx
+│   ├── components/
+│   │   ├── ui/            # Button, Card, Badge, Input, Select, Modal, Skeleton, EmptyState, Avatar, Toast
+│   │   ├── layout/        # Sidebar, TopNav, AppLayout, MobileDrawer
+│   │   ├── dashboard/
+│   │   ├── expenses/
+│   │   ├── settlements/
+│   │   ├── analytics/
+│   │   └── members/
+│   ├── pages/
+│   │   ├── Dashboard.jsx
+│   │   ├── Expenses.jsx
+│   │   ├── AddExpense.jsx
+│   │   ├── EditExpense.jsx
+│   │   ├── Members.jsx
+│   │   ├── MemberProfile.jsx
+│   │   ├── Settlements.jsx
+│   │   ├── Analytics.jsx
+│   │   └── Settings.jsx
+│   ├── utils/
+│   │   ├── formatters.js       # formatCurrency, formatDate
+│   │   ├── categoryIcons.js    # icon_name → Lucide component map
+│   │   └── constants.js
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── index.css
+├── vite.config.js
+├── tailwind.config.js
+└── package.json
+```
+
+### Category Icon Map (frontend)
+
+```js
+// utils/categoryIcons.js
+import { ShoppingCart, Leaf, Fuel, Wifi, Sparkles, Zap, Cookie, Home, Package } from 'lucide-react';
+
+export const CATEGORY_ICONS = {
+  'shopping-cart': ShoppingCart,
+  'leaf':          Leaf,
+  'fuel':          Fuel,
+  'wifi':          Wifi,
+  'sparkles':      Sparkles,
+  'zap':           Zap,
+  'cookie':        Cookie,
+  'home':          Home,
+  'package':       Package,
+};
+
+export const getCategoryIcon = (iconName) => CATEGORY_ICONS[iconName] ?? Package;
+```
+
+---
+
+## 8. Environment Variables & Security Model
+
+> [!CAUTION]
+> `SUPABASE_SERVICE_ROLE_KEY` bypasses all Row Level Security. It must **never** appear in frontend code, browser DevTools, or any client-side bundle. It lives only in `backend/.env`.
+
+### Security Architecture
+
+```
+Browser (React 18)
+    │
+    │  HTTP requests to Express
+    ▼
+Express Backend  ←── SUPABASE_SERVICE_ROLE_KEY (server only, env var)
+    │
+    │  Supabase JS client (service role)
+    ▼
+Supabase PostgreSQL
+```
+
+The frontend **never** calls Supabase directly in Phase 1. All data flows through the Express API. `VITE_SUPABASE_*` vars are **not needed** in Phase 1 — they are reserved for when Supabase Realtime subscriptions are added client-side (Phase 13), using the safe **anon key** only.
+
+### `backend/.env.example`
+```env
+PORT=3001
+NODE_ENV=development
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # server only — never expose
+FRONTEND_URL=http://localhost:5173
+```
+
+### `frontend/.env.example`
+```env
+# Phase 1: only the API base URL is needed
+VITE_API_BASE_URL=http://localhost:3001/api/v1
+
+# Phase 13 (Realtime only): anon key is safe to expose — it respects RLS
+# VITE_SUPABASE_URL=https://your-project.supabase.co
+# VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+---
+
+## 9. Standardised API Response Shape
+
+All endpoints return a consistent envelope. No ad-hoc shapes.
+
+### Success
+```json
+{
+  "success": true,
+  "data": { ... },
+  "meta": {
+    "page": 1,
+    "per_page": 20,
+    "total": 143
+  }
+}
+```
+`meta` is included only on paginated list responses.
+
+### Error
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EXPENSE_NOT_FOUND",
+    "message": "Expense with id abc-123 does not exist.",
+    "details": []
+  }
+}
+```
+
+### Error Code Registry
+
+| Code | HTTP | When |
+|---|---|---|
+| `VALIDATION_ERROR` | 400 | Zod schema fails |
+| `INVALID_SPLIT_AMOUNTS` | 400 | Exact split doesn't sum to total |
+| `INVALID_SPLIT_PERCENTAGES` | 400 | Percentages don't sum to 100 |
+| `NO_PARTICIPANTS` | 400 | Expense submitted with 0 participants |
+| `SELF_SETTLEMENT` | 400 | from_member == to_member |
+| `MEMBER_NOT_FOUND` | 404 | Member UUID doesn't exist |
+| `EXPENSE_NOT_FOUND` | 404 | Expense UUID doesn't exist or soft-deleted |
+| `CATEGORY_NOT_FOUND` | 404 | Category UUID doesn't exist |
+| `SETTLEMENT_NOT_FOUND` | 404 | Settlement UUID doesn't exist |
+| `MEMBER_DELETED` | 409 | Operating on a soft-deleted member |
+| `DUPLICATE_PARTICIPANT` | 409 | Same member listed twice in participants |
+| `DB_INSERT_FAILED` | 500 | Supabase write error |
+| `DB_QUERY_FAILED` | 500 | Supabase read error |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
+
+```js
+// utils/AppError.js
+class AppError extends Error {
+  constructor(code, statusCode, message, details = []) {
+    super(message);
+    this.code = code;           // e.g. 'EXPENSE_NOT_FOUND'
+    this.statusCode = statusCode;
+    this.details = details;     // Zod field errors, etc.
+  }
+}
+
+// utils/apiResponse.js
+const success = (res, data, meta, statusCode = 200) =>
+  res.status(statusCode).json({ success: true, data, ...(meta && { meta }) });
+
+const error = (res, err) =>
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error: { code: err.code || 'INTERNAL_ERROR', message: err.message, details: err.details || [] }
+  });
+```
+
+---
+
+## 10. Build Order
+
+| Phase | What Gets Built | Milestone |
+|---|---|---|
+| **1** | Database schema + seed members & categories | Supabase ready |
+| **2** | Express server, config, middleware, validators, utils | Backend boots |
+| **3** | Members CRUD + Categories GET + Expenses CRUD (equal split) | All core APIs working |
+| **4** | Balance calculation service + `/dashboard` endpoint | Balances visible |
+| **5** | Settlement algorithm + Settlements CRUD | Debts resolved |
+| **6** | React 18 scaffold — Vite, Tailwind, routing, layout, dark mode | UI shell visible |
+| **7** | Dashboard page + Expenses list + Add/Edit forms | **MVP complete** |
+| **8** | Members page + Member profile + Settlements page + Analytics | Full feature set |
+| **9** | Deployment — Supabase → Render/Railway → Vercel | Live in production |
+| **10** | Unit tests (Vitest) + API tests (Supertest) + Swagger docs | Tested & documented |
+| **11** | CSV/PDF export + PWA + Real-time + v1.1 exact split | Production polish |
+
+---
+
+## 11. Member Color Palette (Seed Data)
+
+Each of the 6 members gets a distinct, predefined color baked into seed SQL. No default fallback — every member has a unique identity color used for avatars and charts.
+
+| Member | Color | Hex |
+|---|---|---|
+| Swaroop | Indigo | `#6366f1` |
+| Joel | Emerald | `#10b981` |
+| Akshay | Amber | `#f59e0b` |
+| Afril | Rose | `#f43f5e` |
+| Siddarth | Sky | `#0ea5e9` |
+| Alan | Violet | `#8b5cf6` |
+
+New members added later can pick from an extended palette exposed by the `GET /api/v1/members/colors` endpoint (returns available hex values).
+
+---
+
+## 12. Features Per Phase
+
+### MVP (Phases 1–9)
+- ✅ All 6 members seeded with distinct colors
+- ✅ 9 categories seeded with icon_name + distinct color (read-only)
+- ✅ Add / Edit / Delete expense (soft delete)
+- ✅ Equal split (Phase 4), Exact + Percentage split (Phase 4 extension)
+- ✅ Balance calculation (no DB storage)
+- ✅ Settlement suggestions (greedy algorithm)
+- ✅ Dashboard summary
+- ✅ Expenses table with search + filter + pagination
+- ✅ Dark / Light mode
+- ✅ Consistent API response envelope + error codes
+
+### Phase 2 Features (Phases 10–13)
+- ⭐ Favourite expenses + filter
+- 📋 Duplicate expense
+- 🔁 Recurring expenses
+- 📊 Analytics charts
+- 📤 CSV + PDF export
+- 📡 Real-time updates (Supabase Realtime, anon key only)
+- 📱 PWA + offline caching
+
+---
+
+## What's Deliberately Excluded (Now)
+
+| Excluded | Reason |
+|---|---|
+| `expense_receipts` table | Removed |
+| Separate `payments` table | Settlement `status = 'completed'` handles Phase 1 |
+| Supabase RPC / stored procedures | Service-layer sequencing is simpler and more maintainable |
+| Auth / login | Future feature |
+| `POST /categories` endpoint | Categories are seed data, not user-managed |
+| Service Role Key on frontend | Security — server-side only |
+| Soft delete on `expense_participants` | Hard delete + cascade |
+| Soft delete on `categories` | Reference data |
+| Stored balance columns | Computed always = always correct |
+| Cross-table transactions | Supabase does not support multi-statement transactions in the JS client; complex operations must be split or handled via specialized logic |
+
+---
+
+## 13. ER Diagram
+
+```mermaid
+erDiagram
+    MEMBERS ||--o{ EXPENSES : "paid_by"
+    MEMBERS ||--o{ EXPENSE_PARTICIPANTS : "member_id"
+    MEMBERS ||--o{ SETTLEMENTS : "from_member"
+    MEMBERS ||--o{ SETTLEMENTS : "to_member"
+    CATEGORIES ||--o{ EXPENSES : "category_id"
+    EXPENSES ||--o{ EXPENSE_PARTICIPANTS : "expense_id"
+    EXPENSES ||--o| EXPENSES : "parent_expense_id"
+
+    MEMBERS {
+        uuid id PK
+        text name
+        text color
+        text email
+        boolean is_active
+        timestamptz deleted_at
+    }
+    CATEGORIES {
+        uuid id PK
+        text name
+        text icon_name
+        text color
+        int sort_order
+    }
+    EXPENSES {
+        uuid id PK
+        text title
+        numeric amount
+        uuid category_id FK
+        uuid paid_by FK
+        text split_type
+        text expense_type
+        date expense_date
+        boolean is_favourite
+        jsonb recurrence_rule
+        timestamptz deleted_at
+    }
+    EXPENSE_PARTICIPANTS {
+        uuid id PK
+        uuid expense_id FK
+        uuid member_id FK
+        numeric share_amount
+        numeric share_percent
+    }
+    SETTLEMENTS {
+        uuid id PK
+        uuid from_member FK
+        uuid to_member FK
+        numeric amount
+        text status
+        date settled_date
+        timestamptz deleted_at
+    }
+```
+
+---
+
+## 14. API Flow Diagram
+
+```mermaid
+flowchart TD
+    A["React 18\n(Browser)"] -->|"HTTP via Axios"| B["Express Server\n(Port 3001)"]
+    B --> C["Rate Limiter\n+ Request Logger"]
+    C --> D["Route\n/api/v1/.."]
+    D --> E["Zod Validation\nMiddleware"]
+    E --> F["Controller\n(thin handler)"]
+    F --> G["Service Layer\n(business logic)"]
+    G --> H["Supabase JS Client\n(service_role key)"]
+    H --> I[("Supabase\nPostgreSQL")]
+    G --> J["balanceService\n(pure computation)"]
+    G --> K["settlementAlgorithm\n(pure function)"]
+    F -->|"apiResponse.success()\nor apiResponse.error()"| A
+    E -->|"AppError\nVALIDATION_ERROR"| L["errorHandler\nMiddleware"]
+    L --> A
+```
+
+---
+
+## 15. Deployment
+
+| Layer | Platform | Notes |
+|---|---|---|
+| **Database** | [Supabase](https://supabase.com) | Free tier — 500 MB, 2 projects |
+| **Backend** | [Render](https://render.com) or [Railway](https://railway.app) | Free tier available; auto-deploy from GitHub |
+| **Frontend** | [Vercel](https://vercel.com) | Free tier; auto-deploy on push to `main` |
+
+### Environment Setup Per Platform
+
+#### Supabase
+1. Create project → copy `Project URL` and `service_role` key from **Settings → API**
+2. Open **SQL Editor** → paste and run `database/schema.sql`
+3. Verify seed data in **Table Editor → members** and **categories**
+
+#### Render / Railway (Backend)
+1. Connect GitHub repo, select `backend/` as root directory
+2. Build command: `npm install`
+3. Start command: `node server.js`
+4. Add environment variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `FRONTEND_URL`, `NODE_ENV=production`
+
+#### Vercel (Frontend)
+1. Connect GitHub repo, set **Root Directory** to `frontend/`
+2. Framework preset: **Vite**
+3. Add environment variable: `VITE_API_BASE_URL=https://your-backend.onrender.com/api/v1`
+4. Deploy → Vercel assigns a `*.vercel.app` domain automatically
+
+### CORS Configuration
+The Express backend reads `FRONTEND_URL` from env and allows that origin:
+```js
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+```
+Update `FRONTEND_URL` on Render/Railway to your Vercel production URL after first deploy.
+
+---
+
+## 16. Testing Plan
+
+### Unit Tests — Vitest
+
+Focus: pure functions with no I/O. Fast, no DB needed.
+
+```
+backend/src/services/__tests__/
+  settlementAlgorithm.test.js   # greedy algorithm correctness
+  balanceService.test.js        # balance math edge cases
+  expensesService.test.js       # share calculation (equal / exact / percentage)
+```
+
+Example settlement algorithm tests:
+```js
+describe('settlementAlgorithm', () => {
+  it('returns empty array when all balances are zero')
+  it('resolves two-person debt in one transaction')
+  it('minimises transactions for 6 members')
+  it('handles floating point amounts correctly')
+  it('never produces self-payment transfers')
+})
+```
+
+### API Integration Tests — Supertest
+
+Run against a test Supabase project (or mocked Supabase client):
+
+```
+backend/src/__tests__/
+  members.test.js       # GET, POST, PUT, soft-delete
+  expenses.test.js      # CRUD + split type validation
+  settlements.test.js   # create, mark complete
+  dashboard.test.js     # summary calculation correctness
+```
+
+### Frontend Component Tests — React Testing Library + Vitest
+
+```
+frontend/src/__tests__/
+  ExpenseForm.test.jsx      # form validation, split type switching
+  BalanceCard.test.jsx      # green/red colour logic
+  SettlementCard.test.jsx   # mark as settled interaction
+  formatters.test.js        # formatCurrency, formatDate
+  categoryIcons.test.js     # icon_name → component mapping
+```
+
+### Running Tests
+```bash
+# Backend
+cd backend && npm test
+
+# Frontend
+cd frontend && npm test
+```
+
+---
+
+## 17. Swagger / OpenAPI Documentation
+
+Using [`swagger-jsdoc`](https://github.com/Surnet/swagger-jsdoc) + [`swagger-ui-express`](https://github.com/scottie1984/swagger-ui-express).
+
+### Setup
+```js
+// server.js
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
+
+const spec = swaggerJsdoc({
+  definition: {
+    openapi: '3.0.0',
+    info: { title: 'PG Expense Tracker API', version: '1.0.0' },
+    servers: [{ url: '/api/v1' }],
+  },
+  apis: ['./src/api/v1/routes/*.js'],  // JSDoc comments in route files
+});
+
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(spec));
+```
+
+Docs will be available at: `http://localhost:3001/api/docs`
+
+### Annotation Style (in route files)
+```js
+/**
+ * @openapi
+ * /expenses:
+ *   post:
+ *     summary: Create a new expense
+ *     tags: [Expenses]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateExpenseInput'
+ *     responses:
+ *       201:
+ *         description: Expense created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiSuccess'
+ *       400:
+ *         description: Validation error
+ */
+```
+
+All 6 resources (members, expenses, categories, settlements, dashboard, analytics) will be documented. The Swagger UI is disabled in production (`NODE_ENV !== 'development'`).

@@ -23,14 +23,14 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background flex-col md:flex-row overflow-hidden">
       {/* Mobile Header */}
-      <div className="md:hidden h-16 bg-surface border-b border-divider flex items-center justify-between px-4 shrink-0">
-        <h1 className="text-xl font-bold text-primary tracking-tight">PG Expense</h1>
+      <div className="md:hidden h-16 bg-surface border-b border-divider flex items-center gap-3 px-4 shrink-0">
         <button 
           onClick={() => setIsSidebarOpen(true)} 
-          className="p-2 text-primary hover:bg-surface-hover rounded-md transition-colors"
+          className="p-2 text-primary hover:bg-surface-hover rounded-md transition-colors -ml-2"
         >
           <Menu className="w-6 h-6" />
         </button>
+        <h1 className="text-xl font-bold text-primary tracking-tight">PG Expense</h1>
       </div>
 
       {/* Mobile Overlay */}

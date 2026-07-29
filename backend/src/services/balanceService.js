@@ -2,13 +2,20 @@ import { supabase } from '../config/supabase.js';
 import { AppError } from '../utils/AppError.js';
 
 export async function calculateBalances() {
-  // 1. Fetch all active members
-  const { data: members, error: memErr } = await supabase
-    .from('members')
-    .select('id, name, avatar_url, color')
-    .is('deleted_at', null);
+  // 1. Fetch all required data concurrently
+  const [
+    { data: members, error: memErr },
+    { data: expenses, error: expErr },
+    { data: settlements, error: setErr }
+  ] = await Promise.all([
+    supabase.from('members').select('id, name, avatar_url, color').is('deleted_at', null),
+    supabase.from('expenses').select('id, amount, paid_by, expense_participants(member_id, share_amount)').is('deleted_at', null),
+    supabase.from('settlements').select('from_member, to_member, amount').is('deleted_at', null).eq('status', 'completed')
+  ]);
 
   if (memErr) throw new AppError('DB_QUERY_FAILED', 500, memErr.message);
+  if (expErr) throw new AppError('DB_QUERY_FAILED', 500, expErr.message);
+  if (setErr) throw new AppError('DB_QUERY_FAILED', 500, setErr.message);
 
   // Initialize balances map
   const balances = {};
@@ -26,19 +33,7 @@ export async function calculateBalances() {
     };
   }
 
-  // 2. Fetch all active expenses and their participants
-  const { data: expenses, error: expErr } = await supabase
-    .from('expenses')
-    .select(`
-      id,
-      amount,
-      paid_by,
-      expense_participants(member_id, share_amount)
-    `)
-    .is('deleted_at', null);
-
-  if (expErr) throw new AppError('DB_QUERY_FAILED', 500, expErr.message);
-
+  // 2. Process expenses
   for (const exp of expenses) {
     // Process paid amount
     if (balances[exp.paid_by]) {
@@ -53,15 +48,7 @@ export async function calculateBalances() {
     }
   }
 
-  // 3. Fetch all completed settlements
-  const { data: settlements, error: setErr } = await supabase
-    .from('settlements')
-    .select('from_member, to_member, amount')
-    .is('deleted_at', null)
-    .eq('status', 'completed');
-
-  if (setErr) throw new AppError('DB_QUERY_FAILED', 500, setErr.message);
-
+  // 3. Process completed settlements
   for (const s of settlements) {
     const amount = parseFloat(s.amount);
     if (balances[s.from_member]) {

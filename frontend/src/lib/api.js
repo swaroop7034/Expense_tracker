@@ -19,8 +19,9 @@ export const createMember = (data) => api.post('/members', data).then(res => res
 // Categories
 export const getCategories = () => api.get('/categories').then(res => res.data);
 
-// Dashboard
+// Dashboard & Analytics
 export const getDashboard = () => api.get('/dashboard').then(res => res.data);
+export const getAnalytics = () => api.get('/analytics').then(res => res.data);
 
 // Settlements
 export const getSettlements = () => api.get('/settlements').then(res => res.data);

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { Home, Receipt, Users, Banknote, Activity as ActivityIcon, Calculator, Menu, X } from 'lucide-react';
+import { Home, Receipt, Users, Banknote, Activity as ActivityIcon, Calculator, Menu, X, PieChart } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -14,6 +14,7 @@ export default function Layout() {
   const navItems = [
     { to: '/', label: 'Dashboard', icon: Home },
     { to: '/expenses', label: 'Expenses', icon: Receipt },
+    { to: '/analytics', label: 'Analytics', icon: PieChart },
     { to: '/activity', label: 'Activity', icon: ActivityIcon },
     { to: '/members', label: 'Members', icon: Users },
     { to: '/settlements', label: 'Settlements', icon: Banknote },

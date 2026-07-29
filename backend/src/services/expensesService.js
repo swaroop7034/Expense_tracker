@@ -137,6 +137,8 @@ export async function getExpenses(query) {
   if (query.is_favourite !== undefined) dbQuery = dbQuery.eq('is_favourite', query.is_favourite);
   if (query.date_from) dbQuery = dbQuery.gte('expense_date', query.date_from);
   if (query.date_to) dbQuery = dbQuery.lte('expense_date', query.date_to);
+  if (query.amount_min !== undefined) dbQuery = dbQuery.gte('amount', query.amount_min);
+  if (query.amount_max !== undefined) dbQuery = dbQuery.lte('amount', query.amount_max);
   if (query.search) dbQuery = dbQuery.ilike('title', `%${query.search}%`);
   
   if (query.member_id) {

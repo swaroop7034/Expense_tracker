@@ -7,6 +7,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import settlementsRoutes from './routes/settlements.js';
 import activityRoutes from './routes/activity.js';
 import breakdownRoutes from './routes/breakdown.js';
+import analyticsRoutes from './routes/analytics.js';
 
 const router = Router();
 
@@ -21,5 +22,6 @@ router.use('/dashboard', dashboardRoutes);
 router.use('/settlements', settlementsRoutes);
 router.use('/activity', activityRoutes);
 router.use('/breakdown', breakdownRoutes);
+router.use('/analytics', analyticsRoutes);
 
 export default router;

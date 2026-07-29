@@ -7,6 +7,7 @@ import Members from './pages/Members';
 import Settlements from './pages/Settlements';
 import Activity from './pages/Activity';
 import SimplificationBreakdown from './pages/SimplificationBreakdown';
+import Analytics from './pages/Analytics';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="members" element={<Members />} />
           <Route path="settlements" element={<Settlements />} />
           <Route path="activity" element={<Activity />} />
+          <Route path="analytics" element={<Analytics />} />
           <Route path="breakdown" element={<SimplificationBreakdown />} />
         </Route>
       </Routes>

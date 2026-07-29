@@ -97,7 +97,12 @@ export const listExpensesQuerySchema = z.object({
   is_favourite:z.coerce.boolean().optional(),
   sort_by:     z.enum(['expense_date', 'amount', 'created_at']).default('expense_date'),
   sort_order:  z.enum(['asc', 'desc']).default('desc'),
+  amount_min:  z.coerce.number().nonnegative().optional(),
+  amount_max:  z.coerce.number().positive().optional(),
 }).refine(
   d => !d.date_from || !d.date_to || d.date_from <= d.date_to,
   { message: 'date_from must be before date_to', path: ['date_from'] }
+).refine(
+  d => d.amount_min === undefined || d.amount_max === undefined || d.amount_min <= d.amount_max,
+  { message: 'amount_min must be less than or equal to amount_max', path: ['amount_min'] }
 );

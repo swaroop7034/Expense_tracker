@@ -146,6 +146,10 @@ export async function getExpenses(query) {
   // Sorting
   const ascending = query.sort_order === 'asc';
   dbQuery = dbQuery.order(query.sort_by, { ascending });
+  
+  if (query.sort_by === 'expense_date') {
+    dbQuery = dbQuery.order('created_at', { ascending: false });
+  }
 
   // Pagination
   const from = (query.page - 1) * query.per_page;
